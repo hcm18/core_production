@@ -358,7 +358,8 @@ conditions_tab <- Reduce(
   mutate(across(starts_with("in_"), ~ !is.na(.x) & .x)) %>%
   arrange(Condition, Outcome)
 
-qc_log("Condition and outcome coverage by export", conditions_tab, max_rows = 300)
+# The condition-and-outcome coverage matrix goes to the workbook (tab
+# "2 Conditions by export"), not the QC text file.
 
 # QC CHECK: a condition published in the profiles must reach the profiles files.
 profiles_gaps <- conditions_tab %>%
@@ -391,6 +392,83 @@ index_groups_tab <- profiles_clean %>%
 
 qc_log("Demographics published in the profiles", index_groups_tab, max_rows = 100)
 
+# --- 5. Geography completeness per profiles export ----------------------------
+# For every condition/outcome/demographic combination present in a profiles export,
+# there should be one row per required geography. Required geographies = the
+# published geographies (from the COMPLETE series, minus the internal-only ones)
+# whose GeoType that export is meant to carry. Any missing (combination x geography)
+# cell is a gap. The geography universe itself (count of 74) is checked in step 5;
+# this confirms the exports are rectangular across it.
+published_geos <- complete_clean %>%
+  distinct(Geography, GeoType) %>%
+  filter(!Geography %in% internal_geographies_to_drop)
+
+# GeoType scope per profiles export (NULL = all published GeoTypes).
+profiles_geotype_scope <- list(
+  profiles_all_geos_death        = NULL,
+  profiles_all_geos_morbidity    = NULL,
+  profiles_all_geos_all_outcomes = NULL,
+  profiles_municipal_death       = c("County", "Municipal"),
+  profiles_municipal_morbidity   = c("County", "Municipal"),
+  profiles_regional_death        = c("County", "Region", "SRA"),
+  profiles_regional_morbidity    = c("County", "Region", "SRA")
+)
+combo_keys <- c("Condition", "Outcome", "Demographic_Group", "Demographic")
+
+required_geos_for <- function(export_name) {
+  scope <- profiles_geotype_scope[[export_name]]
+  if (is.null(scope)) published_geos else published_geos %>% filter(GeoType %in% scope)
+}
+
+# One export: the (combination x required geography) cells with no row in the export.
+geo_gaps_for <- function(export_name) {
+  df       <- export_frames[[export_name]]
+  req_geos <- required_geos_for(export_name)
+  combos   <- df %>% distinct(across(all_of(combo_keys)))
+  expected <- tidyr::expand_grid(combos, req_geos)
+  actual   <- df %>% distinct(across(all_of(c(combo_keys, "Geography"))))
+  expected %>%
+    anti_join(actual, by = c(combo_keys, "Geography")) %>%
+    transmute(export = export_name, Condition, Outcome, Demographic_Group,
+              Demographic, Geography, GeoType)
+}
+
+profiles_export_names <- names(profiles_geotype_scope)
+geo_gaps <- bind_rows(lapply(profiles_export_names, geo_gaps_for))
+
+geo_completeness_summary <- bind_rows(lapply(profiles_export_names, function(nm) {
+  df       <- export_frames[[nm]]
+  scope    <- profiles_geotype_scope[[nm]]
+  req_geos <- required_geos_for(nm)
+  n_combos <- df %>% distinct(across(all_of(combo_keys))) %>% nrow()
+  tibble(
+    export            = nm,
+    geotypes_required = if (is.null(scope)) "all published" else paste(scope, collapse = ", "),
+    n_required_geos   = nrow(req_geos),
+    n_combinations    = n_combos,
+    expected_rows     = n_combos * nrow(req_geos),
+    present_rows      = df %>% distinct(across(all_of(c(combo_keys, "Geography")))) %>% nrow(),
+    missing_rows      = sum(geo_gaps$export == nm)
+  )
+}))
+
+# QC CHECK (summary only in the text file; the detail is in the workbook tabs).
+qc_check("Every condition/outcome/demographic has a row for each required geography in every profiles export",
+         nrow(geo_gaps) == 0, on_fail = "warn",
+         details = c("Gaps found. See workbook tabs '5 Geo completeness' and '5b Missing geo rows':",
+                     .qc_capture(geo_completeness_summary %>% filter(missing_rows > 0))))
+
+# Missing-cells tab, guarded for size.
+geo_gaps_tab <- if (nrow(geo_gaps) == 0) {
+  data.frame(note = "None. Every condition/outcome/demographic has a row for every required geography in every profiles export.")
+} else if (nrow(geo_gaps) > 1000000) {
+  data.frame(note = paste0("Too many missing rows to list in a worksheet (",
+                           format(nrow(geo_gaps), big.mark = ","),
+                           "). See the summary tab; a whole geography or GeoType is likely absent."))
+} else {
+  geo_gaps
+}
+
 # --- Write the workbook ----  SAVES A FILE ->
 export_check_intro <- c(
   paste0("EXPORT CHECK: final files, data year ",
@@ -416,6 +494,10 @@ export_check_intro <- c(
   "      3b. Confirm n_geographies for county =1, HCEC=1, Municipal=19, North County=1, Region = 6",
   "         SRA =41 and SupervisorDistrict=5",
   "[ ] 4 Demographics: the published demographic groups and labels are as expected.",
+  "5 Geo completeness: for each profiles export, every condition/outcome/demographic",
+  "      combination should have a row for each required geography. missing_rows = 0 for every export.",
+  "5b Missing geo rows: should say 'None'. Any rows are (combination x geography) cells",
+  "      missing from that export.",
   "",
   "Notes:"
 )
@@ -426,7 +508,9 @@ export_check_sheets <- list(
   "2 Conditions by export" = conditions_tab,
   "3 Geographies"       = geographies_tab,
   "3b Geography counts" = geography_counts,
-  "4 Demographics"      = index_groups_tab
+  "4 Demographics"      = index_groups_tab,
+  "5 Geo completeness"  = geo_completeness_summary,
+  "5b Missing geo rows" = geo_gaps_tab
 )
 
 write.xlsx(export_check_sheets, file = export_check_file, overwrite = TRUE,
@@ -496,7 +580,8 @@ qc_finish(
     "All ten exports were produced (3 complete, 7 profiles), each as .csv and .rds.",
     "PROFILES rows by Outcome: condition and geography counts look right, and the number of published cases and rates is in line with last year.",
     "Export contents: each export holds the right outcomes, condition groups, demographic groups, geographies, and GeoTypes.",
-    "Geographies by GeoType: the published geography list is right, and only the intended geographies are internal-only."
+    "Geographies by GeoType: the published geography list is right, and only the intended geographies are internal-only.",
+    "Geography completeness: missing_rows is 0 for every profiles export (see the export check workbook, tab 5)."
   ),
   review_files = c(
     "project_root/rates/data/output/final/profiles_all_geos_death_<year>_<date>.csv: confirm the column names are the published ones and that suppressed cells are blank, not zero.",
