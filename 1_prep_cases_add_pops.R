@@ -3,18 +3,18 @@
 # ===========================================================================*
 # PURPOSE
 #   Entry point for the RATES pipeline. Loads the wide all-outcomes case file
-#   produced by prep_cases, then runs steps 2-4 in order:
+#   produced by 3_prep_cases, then runs steps 2-4 in order:
 #     2  pivot cases long, allocate to final geographies, aggregate
 #     3  match adjusted cases to populations
 #     4  sex-specific denominator processing
 #   (Step 5 (crude + AA rates + suppression) is run separately.)
 #
 # INPUTS (read from disk)
-#   - prep_cases/data/clean/condfiles/all_outcomes_merged.rds
-#     (the combined case file produced by prep_cases step 3)
+#   - project_root/3_prep_cases/data/output/condfiles/all_outcomes_merged.rds
+#     (the combined case file produced by 3_prep_cases step 3)
 #
 # OUTPUTS (written to disk)
-#   - qc/qc_1_prep_cases_add_pops.txt   QC report for this script, including the
+#   - project_root/rates/qc/qc_1_prep_cases_add_pops.txt   QC report for this script, including the
 #                                       status of the step 2-4 QC reports
 #   - the sourced steps 2-4 write their own files and their own QC reports.
 #
@@ -23,18 +23,18 @@
 # --------------------------------------------------------------------------*
 
 # ---- Step 0: Configuration: EDIT HERE BEFORE RUNNING SCRIPT -----------------
-# Before running, confirm the sibling projects (prep_cases, prep_populations,
-# prep_allocation_xwalk) have produced their outputs and that update_lists is
+# Before running, confirm the sibling projects (3_prep_cases, 2_prep_populations,
+# 1_1_prep_allocation_xwalk) have produced their outputs and that update_lists is
 # current.
 
 # Main project root: UPDATE PROJECT ROOT FOLDER
-project_root <- "D:/core_r_HM"
+project_root <- "D:/core_production"
 
 # --- Rates project folders (this project) ---
 rates_dir   <- file.path(project_root, "rates")
 scripts_dir <- file.path(rates_dir, "scripts")
-clean_dir   <- file.path(rates_dir, "data", "clean")
 output_dir  <- file.path(rates_dir, "data", "output")
+clean_dir   <- file.path(output_dir, "cleaned cases")
 
 # Output subfolders built from clean_dir.
 final_adjusted_dir <- file.path(clean_dir, "final_adjusted")
@@ -42,7 +42,6 @@ qc_dir             <- file.path(project_root, "rates", "qc")
 
 #Create directories if they don't exist
 dirs_to_create <- c(
-  scripts_dir,
   clean_dir,
   output_dir,
   final_adjusted_dir,
@@ -58,20 +57,20 @@ for (d in dirs_to_create) {
 #update lists directory 
 update_lists_dir <- file.path(project_root, "update_lists")
 # populations directory
-pop_dir   <- file.path(project_root, "prep_populations", "data", "clean")
+pop_dir   <- file.path(project_root, "2_prep_populations", "data", "output")
 
 #All outcomes merged file location
-cases_input <- file.path(project_root, "prep_cases", "data", "clean",
+cases_input <- file.path(project_root, "3_prep_cases", "data", "output",
                          "condfiles", "all_outcomes_merged.rds")
 # Allocation crosswalk location
-alloc_xwalk_file <- file.path(project_root, "prep_allocation_xwalk",
+alloc_xwalk_file <- file.path(project_root, "1_prep_allocation_xwalk",
                               "data", "clean", "allocxwalk.rds")
 
 
 # --- Pipeline step scripts (sourced below) ---
-step2_script <- file.path(scripts_dir, "2_pivot_cases_long_allocate_aggregate_final_geog (2).R")
-step3_script <- file.path(scripts_dir, "3_match_up_adjusted_cases_pops (2).R")
-step4_script <- file.path(scripts_dir, "4_sex_specific_processing (2).R")
+step2_script <- file.path(scripts_dir, "1a_pivot_cases_long_allocate_aggregate_final_geog.R")
+step3_script <- file.path(scripts_dir, "1b_match_up_adjusted_cases_pops.R")
+step4_script <- file.path(scripts_dir, "1c_sex_specific_processing.R")
 
 # --- Shared QC helper functions ---
 # Steps 2-4 inherit this path and write their own reports to qc_dir.
@@ -103,7 +102,7 @@ year_value <- read_csv(file.path(update_lists_dir, "datayear.csv"),
   as.character()
 qc_data_year(year_value)
 qc_input_exists(cases_input, "all_outcomes_merged.rds (prep_cases)")
-qc_input_exists(alloc_xwalk_file, "allocxwalk.rds (prep_allocation_xwalk)")
+qc_input_exists(alloc_xwalk_file, "allocxwalk.rds (1_prep_allocation_xwalk)")
 qc_check("Population folder exists", dir.exists(pop_dir), details = paste("Not found:", pop_dir))
 qc_input_exists(file.path(update_lists_dir, "demo_key_female_condition.csv"))
 qc_input_exists(file.path(update_lists_dir, "demo_key_male_condition.csv"))
@@ -145,7 +144,7 @@ qc_log("Case file rows by OUTCOME",
 #
 # INPUTS (read from disk)
 #   - data/clean/cases_long.rds                       (re-read checkpoint, below)
-#   - prep_allocation_xwalk/data/clean/allocxwalk.rds allocation crosswalk
+#   - 1_prep_allocation_xwalk/data/clean/allocxwalk.rds allocation crosswalk
 #   Also uses cases_wide / case_group_cols from step 1 (this script is sourced).
 #
 # OUTPUTS (written to disk)  -- see "SAVES A FILE" markers
@@ -170,7 +169,7 @@ source(step2_script)
 #
 # INPUTS (read from disk)
 #   - data/clean/final_adjusted/final_adjusted_cases.rds        (from step 2)
-#   - prep_populations/data/clean/final_populations_xgeography_vert_<YYYY>.rds
+#   - 2_prep_populations/data/clean/final_populations_xgeography_vert_<YYYY>.rds
 #
 # OUTPUTS (written to disk)  -- see "SAVES A FILE" markers
 #   - data/clean/final_adjusted/final_adjusted_cases_with_pop.rds/.csv
